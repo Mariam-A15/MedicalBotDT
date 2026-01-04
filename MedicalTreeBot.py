@@ -30,6 +30,8 @@ class MedicalTreeBot:
             if values[idx] > 0:
                 results.append({
                     "disease": self.class_names[idx],
-                    "confidence": f"{(values[idx] / total) * 100:.2f}%"
+                    "confidence": values[idx] / total 
                 })
+        return results
+
         return results
