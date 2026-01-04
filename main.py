@@ -1,31 +1,41 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from pydantic import BaseModel
 from typing import Optional, List
-from MedicalTreeBot import MedicalTreeBot 
-from fastapi.responses import HTMLResponse 
+from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
+from fastapi import Request
 import joblib
+import os
 
+from MedicalTreeBot import MedicalTreeBot
+
+
+# ---------- Load model files safely ----------
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 try:
-    print("Trying to load files...")
-    model = joblib.load("MedicalTreeModel.joblib")
-    le = joblib.load("LabelEncoder.joblib")
-    feature_names = joblib.load("features.joblib")
-    print("All files loaded successfully!")
+    model = joblib.load(os.path.join(BASE_DIR, "MedicalTreeModel.joblib"))
+    le = joblib.load(os.path.join(BASE_DIR, "LabelEncoder.joblib"))
+    feature_names = joblib.load(os.path.join(BASE_DIR, "features.joblib"))
 except Exception as e:
-    print(f"Error loading files: {e}")
+    raise RuntimeError(f"Failed to load model files: {e}")
 
+
+# ---------- App ----------
 app = FastAPI(title="Medical Diagnosis Expert System")
 templates = Jinja2Templates(directory="templates")
 
+
+# ---------- Schemas ----------
 class DiagnosisRequest(BaseModel):
-    node_id: int = 0
+    node_id: int
     answer: Optional[int] = None
+
 
 class PredictionResult(BaseModel):
     disease: str
-    confidence: str
+    confidence: float
+
 
 class DiagnosisResponse(BaseModel):
     status: str
@@ -34,33 +44,41 @@ class DiagnosisResponse(BaseModel):
     results: Optional[List[PredictionResult]] = None
 
 
+# ---------- Routes ----------
 @app.get("/", response_class=HTMLResponse)
-def read_root(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request, "prediction": None})
+def index(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request})
+
 
 @app.post("/diagnose/", response_model=DiagnosisResponse)
-def diagnose(request: DiagnosisRequest):
+def diagnose(payload: DiagnosisRequest):
     bot = MedicalTreeBot(model, feature_names, le.classes_)
-    bot.current_node = request.node_id
+    bot.current_node = payload.node_id
 
-    if request.answer is not None:
-        bot.submit_answer(request.answer)
+    if payload.answer is not None:
+        bot.submit_answer(payload.answer)
 
     if bot.is_leaf():
-        final_results = bot.get_result()
         return DiagnosisResponse(
-            status="final", 
-            results=final_results
+            status="final",
+            results=bot.get_result()
         )
 
-    next_question = bot.get_question()
-    
+    question = bot.get_question()
+    if not question:
+        return DiagnosisResponse(
+            status="final",
+            results=bot.get_result()
+        )
+
     return DiagnosisResponse(
         status="question",
         node_id=int(bot.current_node),
-        question=f"Do you have {next_question.replace('_', ' ')}?"
+        question=f"Do you have {question.replace('_', ' ')}?"
     )
 
+
+# ---------- Local run ----------
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=8000)
